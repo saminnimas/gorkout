@@ -8,6 +8,8 @@ import {
   onSnapshot,
   serverTimestamp,
   setDoc,
+  updateDoc,
+  arrayUnion,
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
@@ -30,6 +32,9 @@ export default function GoalDetail() {
   const [logBusy, setLogBusy] = useState(false)
   const [surrenderBusy, setSurrenderBusy] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [friends, setFriends] = useState([])
+  const [addFriendId, setAddFriendId] = useState('')
+  const [addFriendBusy, setAddFriendBusy] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 30_000)
@@ -100,7 +105,20 @@ export default function GoalDetail() {
       cancelled = true
     }
   }, [participantIds.join(',')])
-
+  useEffect(() => {
+    if (!user || goal?.creatorUid !== user.uid) {
+      setFriends([])
+      return
+    }
+    const friendsCollection = collection(db, 'users', user.uid, 'friends')
+    return onSnapshot(friendsCollection, (snap) => {
+      const items = snap.docs.map((d) => ({
+        uid: d.id,
+        username: d.data().username,
+      }))
+      setFriends(items)
+    })
+  }, [user, goal])
   const totals = useMemo(() => leaderboardTotalReps(logs), [logs])
   const byUserField = useMemo(() => leaderboardFieldTotals(logs), [logs])
 
@@ -191,6 +209,26 @@ export default function GoalDetail() {
     }
   }
 
+  async function addFriendToGoal() {
+    if (!goalId || !user || !addFriendId) return
+    if (goal.participantIds && goal.participantIds.includes(addFriendId)) {
+      alert('This user is already a participant')
+      return
+    }
+    setAddFriendBusy(true)
+    try {
+      await updateDoc(doc(db, 'goals', goalId), {
+        participantIds: arrayUnion(addFriendId),
+      })
+      setAddFriendId('')
+    } catch (err) {
+      console.error('Failed to add friend:', err)
+      alert('Failed to add friend to goal')
+    } finally {
+      setAddFriendBusy(false)
+    }
+  }
+
   if (goal === undefined) {
     return (
       <div className="px-4 py-12 text-center text-sm text-zinc-500">
@@ -214,6 +252,11 @@ export default function GoalDetail() {
     user &&
     participantIds.includes(user.uid) &&
     myStatus === 'active'
+
+  const isCreator = user && goal?.creatorUid === user.uid
+  const availableFriendsToAdd = friends.filter(
+    (f) => !participantIds.includes(f.uid),
+  )
 
   const quitInsultText =
     goal.quitInsult?.trim() || goal.customInsult || ''
@@ -321,6 +364,34 @@ export default function GoalDetail() {
           ))}
         </ul>
       </section>
+
+      {isCreator && availableFriendsToAdd.length > 0 ? (
+        <section className="space-y-2 rounded-lg border border-zinc-800 p-4">
+          <h2 className="text-sm text-zinc-400">Add participants</h2>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <select
+              value={addFriendId}
+              onChange={(e) => setAddFriendId(e.target.value)}
+              className="w-full flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-zinc-600"
+            >
+              <option value="">Select a friend…</option>
+              {availableFriendsToAdd.map((f) => (
+                <option key={f.uid} value={f.uid}>
+                  @{f.username}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={addFriendToGoal}
+              disabled={addFriendBusy || !addFriendId}
+              className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
+            >
+              Add
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {canLog ? (
         <section className="space-y-2 rounded-lg border border-zinc-800 p-4">
